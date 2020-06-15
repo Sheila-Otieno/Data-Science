@@ -1,0 +1,150 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import warnings
+from sklearn.feature_extraction.text import TfidfVectorizer,CountVectorizer
+from sklearn.metrics.pairwise import linear_kernel
+from surprise import Reader, Dataset, SVD, evaluate
+from sklearn import preprocessing
+
+
+warnings.filterwarnings('ignore')
+#inspired from https://www.kaggle.com/jemseow/machine-learning-to-predict-app-ratings
+#get the game application data from the google playstore dataset
+games = pd.read_csv("googleplaystore.csv")
+#print the first five elements
+print(games.head())
+#print the information of the dataset
+print(games.info())
+
+#Remove all missing values from the dataset
+
+#Get the total and percentage of missing values
+total = games.isnull().sum().sort_values(ascending=False)
+percent = (games.isnull().sum()/games.isnull().count()).sort_values(ascending=False)
+missing_data = pd.concat([total, percent], axis=1, keys=['Total', 'Percent'])
+print(missing_data.head())
+
+#function to remove missing values
+games.dropna(how='any', inplace=True)
+
+#print the total and percentage to see if the missing values have been removed
+total = games.isnull().sum().sort_values(ascending=False)
+percent = (games.isnull().sum()/games.isnull().count()).sort_values(ascending=False)
+missing_data = pd.concat([total, percent], axis=1, keys=['Total', 'Percent'])
+print('After removing missing values')
+print(missing_data.head())
+
+##user reviews dataset
+user_reviews = pd.read_csv("googleplaystore_user_reviews.csv")
+
+#print(user_reviews.head())
+#removing missing values
+total = user_reviews.isnull().sum().sort_values(ascending=False)
+percent = (user_reviews.isnull().sum()/user_reviews.isnull().count()
+           ).sort_values(ascending=False)
+missing_data = pd.concat([total, percent], axis=1, keys=['Total', 'Percent'])
+#print(missing_data.head())
+
+user_reviews.dropna(how='any', inplace=True)
+
+total = user_reviews.isnull().sum().sort_values(ascending=False)
+percent = (user_reviews.isnull().sum()/user_reviews.isnull().count()
+           ).sort_values(ascending=False)
+missing_data = pd.concat([total, percent], axis=1, keys=['Total', 'Percent'])
+#print(missing_data.head())
+
+#inspired from https://github.com/rounakbanik/movies/blob/master/movies_recommender.ipynb
+#get the average rating given by users
+average_rating = games['Rating'].mean()
+print(average_rating)
+#get the minimum number of reviews 
+games['Reviews'] = games['Reviews'].astype(float)
+minimum_reviews = games['Reviews'].quantile(0.75)
+print(minimum_reviews)
+
+#get number of applications that meet the mininum set percentile
+qualified_apps = games[(games['Reviews'] >= minimum_reviews) & (
+    games['Reviews'].notnull()) & (games['Rating'].notnull())]
+[['App', 'Category', 'Rating', 'Reviews', 'Content', 'Genres','Installs']]
+print('qualified apps')
+print(qualified_apps.shape)
+
+
+
+
+def calculate_rating(x, m=minimum_reviews, C=average_rating):
+    v = x['Reviews']
+    R = x['Rating']
+    return (v/(v+m) * R) + (m/(m+v) * C)
+
+qualified_apps['QA'] = qualified_apps.apply(calculate_rating, axis=1)
+qualified_apps = qualified_apps.sort_values('QA', ascending=False).head(300)
+print(qualified_apps.head(20))
+
+#content-based recommendation
+games['Description']=games['Genres'] + games['Content Rating'] + user_reviews['Translated_Review']
+games['Description'] = games['Description'].fillna('')
+tfidf = TfidfVectorizer(analyzer='word', ngram_range=(1, 2), min_df=0, stop_words='english')
+tfidf_matrix=tfidf.fit_transform(games['Description'])
+print(tfidf_matrix.shape)
+cosine_similarity=linear_kernel(tfidf_matrix,tfidf_matrix)
+print(cosine_similarity[0])
+print(cosine_similarity)
+
+app_name=games['App']
+indices= pd.Series(app_name.index, index=games['App'])
+
+
+def app_recommendations(appname):
+    idx=indices[appname]
+    similarity_score=list(enumerate(cosine_similarity[idx]))
+    similarity_score=sorted(similarity_score, key=lambda x: x[1], reverse=True)
+    similarity_score=similarity_score[1:26]
+    app_indices=[i[0] for i in similarity_score]
+
+    apps=games.iloc[app_indices][['App','Category','Rating','Reviews']]
+    minimum_reviews = games['Rating'].quantile(0.60)
+    qualified_applications = apps[(games['Rating'] >= minimum_reviews) & ( apps['Rating'].notnull()) & (apps['Reviews'].notnull())]
+    qualified_applications['Rating'] = qualified_applications.apply(calculate_rating, axis=1)
+    qualified_applications = qualified_applications.sort_values('Rating', ascending=False).head(10)
+    return qualified_applications
+
+print('Leo and Tig recommendations:')
+print(app_recommendations('Leo and Tig'))
+print('Wipe out recommendations:')
+print(app_recommendations('Wipe out'))
+
+
+
+
+
+#collaborative filtering
+
+#create numbers for the categories so as to have unique numbers for each category
+#inspired from https://www.kaggle.com/jemseow/machine-learning-to-predict-app-ratings
+CategoryString = games["Category"]
+categoryVal = games["Category"].unique()
+categoryValCount = len(categoryVal)
+category_dict = {}
+for i in range(0,categoryValCount):
+    category_dict[categoryVal[i]] = i
+games["Category_c"] = games["Category"].map(category_dict).astype(int)
+#print(games['Category_c'])
+
+
+user_reader = Reader()
+review = Dataset.load_from_df(
+    games[['Category_c', 'Rating', 'Reviews']], user_reader)
+review.split(n_folds=5)
+svd = SVD()
+print(evaluate(svd, review, measures=['RMSE', 'MAE']))
+review_trainset = review.build_full_trainset()
+svd.train(review_trainset)
+print('SVD prediction:')
+print(svd.predict(18, 4.5, 26652))
+
+
+
+
+
+
